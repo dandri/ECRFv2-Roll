@@ -1,6 +1,16 @@
 #include "ELECHOUSE_CC1101_SRC_DRV.h"
-#include <esp_now.h>
+#include <WiFiClient.h> 
 #include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <SPIFFSEditor.h>
+#include <EEPROM.h>
+#include "SPIFFS.h"
+#include "SPI.h"
+#include <WiFiAP.h>
+#include <esp_now.h>
+#include "FS.h"
+#include "SD.h"
 
 #if defined(ESP8266)
     #define RECEIVE_ATTR ICACHE_RAM_ATTR
@@ -49,11 +59,13 @@ unsigned long sample[samplesize];
 int error_toleranz = 200;
 unsigned long samplesmooth[samplesize];
 unsigned long secondsamplesmooth[samplesize];
+unsigned long thirdsamplesmooth[samplesize];
 long transmit_push[2000];
 static unsigned long lastTime = 0;
 const int minsample = 30;
 int smoothcount=0;
 int secondsmoothcount=0;
+int thirdsmoothcount=0;
 
 int start = 0;
 
@@ -250,6 +262,33 @@ void signalanalyse(){
     Serial.println("Second Signal");
   }
  
+if(start == 1) {
+    thirdsmoothcount=0;
+    for (int i=1; i<samplecount; i++){
+        float r = (float)sample[i]/timingdelay[0];
+        int calculate = r;
+        r = r-calculate;
+        r*=10;
+        if (r>=5){calculate+=1;}
+          if (calculate>0){
+            secondsamplesmooth[thirdsmoothcount] = calculate*timingdelay[0];
+            thirdsmoothcount++;
+        }
+    }
+    //Serial.println("Rawdata corrected:");
+    //Serial.print("Count=");
+    //Serial.println(thirdsmoothcount+1);
+  
+    for (int i=0; i<thirdsmoothcount; i++){
+      //Serial.print(secondsamplesmooth[i]);
+      //Serial.print(",");
+      transmit_push[i] = thirdsamplesmooth[i];
+    }
+    start = 2;
+    Serial.println("Third Signal");
+  }
+
+
   if(start == 0) {
     smoothcount=0;
     for (int i=1; i<samplecount; i++){
@@ -410,7 +449,7 @@ void replayfirstsignal(){
 }
 
 void TXfirstsignal(){
-
+  
   ELECHOUSE_cc1101.setSidle();
    // Turn off jammer
   myData.config_jammer = 2;
@@ -420,8 +459,8 @@ void TXfirstsignal(){
   // Send message via ESP-NOW
   esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
   
-  pinMode(TXPin,OUTPUT);
-  ELECHOUSE_cc1101.setModul(1);
+  pinMode(2,OUTPUT);
+  ELECHOUSE_cc1101.setModul(0);
   ELECHOUSE_cc1101.Init();
   ELECHOUSE_cc1101.setModulation(mod);
   ELECHOUSE_cc1101.setMHZ(frequency);
@@ -432,9 +471,9 @@ void TXfirstsignal(){
   //delay(300);
 
   for (int i = 0; i<2000; i+=2){
-    digitalWrite(TXPin,HIGH);
+    digitalWrite(2,HIGH);
     delayMicroseconds(samplesmooth[i]);
-    digitalWrite(TXPin,LOW);
+    digitalWrite(2,LOW);
     delayMicroseconds(samplesmooth[i+1]);
   }
   ELECHOUSE_cc1101.setSidle();
@@ -444,8 +483,8 @@ void TXfirstsignal(){
 void TXsecondsignal(){
 
   ELECHOUSE_cc1101.setSidle();
-  pinMode(TXPin,OUTPUT);
-  ELECHOUSE_cc1101.setModul(1);
+  pinMode(2,OUTPUT);
+  ELECHOUSE_cc1101.setModul(0);
   ELECHOUSE_cc1101.Init();
   ELECHOUSE_cc1101.setModulation(mod);
   ELECHOUSE_cc1101.setMHZ(frequency);
@@ -454,10 +493,31 @@ void TXsecondsignal(){
   delay(500);
 
   for (int i = 0; i<2000; i+=2){
-    digitalWrite(TXPin,HIGH);
+    digitalWrite(2,HIGH);
     delayMicroseconds(secondsamplesmooth[i]);
-    digitalWrite(TXPin,LOW);
+    digitalWrite(2,LOW);
     delayMicroseconds(secondsamplesmooth[i+1]);
+  }
+  ELECHOUSE_cc1101.setSidle();
+}
+
+void TXthirdsignal(){
+
+  ELECHOUSE_cc1101.setSidle();
+  pinMode(2,OUTPUT);
+  ELECHOUSE_cc1101.setModul(0);
+  ELECHOUSE_cc1101.Init();
+  ELECHOUSE_cc1101.setModulation(mod);
+  ELECHOUSE_cc1101.setMHZ(frequency);
+  ELECHOUSE_cc1101.setDeviation(deviation);
+  ELECHOUSE_cc1101.SetTx();
+  delay(500);
+
+  for (int i = 0; i<2000; i+=2){
+    digitalWrite(2,HIGH);
+    delayMicroseconds(thirdsamplesmooth[i]);
+    digitalWrite(2,LOW);
+    delayMicroseconds(thirdsamplesmooth[i+1]);
   }
   ELECHOUSE_cc1101.setSidle();
 }
@@ -480,6 +540,8 @@ void loop() {
       signalanalyse();
       enableReceive();
       TXfirstsignal();
+      TXsecondsignal();
+      TXthirdsignal();
     }
   }
 
